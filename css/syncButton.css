@@ -1,0 +1,369 @@
+/**
+ * VH Etsy Order Sync - Content Styles
+ * Modern UI styles for the sync panel
+ */
+
+/* Reset and base styles */
+.vh-etsy-sync-container * {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+}
+
+/* Main container - floating panel */
+.vh-etsy-sync-container {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  z-index: 999999;
+  filter: drop-shadow(0 4px 20px rgba(0, 0, 0, 0.15));
+}
+
+/* Panel styles */
+.vh-sync-panel {
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+  border-radius: 16px;
+  overflow: hidden;
+  width: 320px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.vh-sync-panel.vh-minimized {
+  width: auto;
+}
+
+.vh-sync-panel.vh-minimized .vh-sync-body,
+.vh-sync-panel.vh-minimized .vh-sync-footer,
+.vh-sync-panel.vh-minimized .vh-sync-title {
+  display: none;
+}
+
+/* Header */
+.vh-sync-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #F56040 0%, #E1306C 100%);
+  color: white;
+  cursor: move;
+}
+
+.vh-sync-logo {
+  background: white;
+  color: #E1306C;
+  font-weight: 800;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  letter-spacing: 1px;
+}
+
+.vh-sync-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.vh-sync-minimize {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.vh-sync-minimize:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Body */
+.vh-sync-body {
+  padding: 16px;
+}
+
+/* Status indicator */
+.vh-sync-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: #f8f9fa;
+  border-radius: 10px;
+  border: 1px solid #e9ecef;
+}
+
+.vh-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #adb5bd;
+  transition: background 0.3s;
+}
+
+.vh-status-dot.vh-status-syncing {
+  background: #ffc107;
+  animation: pulse 1.5s infinite;
+}
+
+.vh-status-dot.vh-status-success {
+  background: #28a745;
+}
+
+.vh-status-dot.vh-status-error {
+  background: #dc3545;
+}
+
+.vh-status-dot.vh-status-warning {
+  background: #fd7e14;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+.vh-status-text {
+  font-size: 13px;
+  color: #495057;
+  font-weight: 500;
+}
+
+/* Action buttons */
+.vh-sync-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.vh-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.vh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vh-btn-primary {
+  background: linear-gradient(135deg, #F56040 0%, #E1306C 100%);
+  color: white;
+  box-shadow: 0 4px 12px rgba(225, 48, 108, 0.3);
+}
+
+.vh-btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(225, 48, 108, 0.4);
+}
+
+.vh-btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.vh-btn-secondary {
+  background: white;
+  color: #495057;
+  border: 1px solid #dee2e6;
+}
+
+.vh-btn-secondary:hover:not(:disabled) {
+  background: #f8f9fa;
+  border-color: #ced4da;
+}
+
+/* Progress bar */
+.vh-sync-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.vh-progress-bar {
+  flex: 1;
+  height: 8px;
+  background: #e9ecef;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.vh-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #F56040 0%, #E1306C 100%);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+.vh-progress-text {
+  font-size: 12px;
+  color: #6c757d;
+  font-weight: 500;
+  min-width: 50px;
+  text-align: right;
+}
+
+/* Results */
+.vh-sync-results {
+  display: flex;
+  gap: 16px;
+  padding: 12px 0;
+}
+
+.vh-result-success,
+.vh-result-skipped,
+.vh-result-failed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.vh-result-success {
+  color: #28a745;
+}
+
+.vh-result-skipped {
+  color: #ffc107;
+}
+
+.vh-result-failed {
+  color: #dc3545;
+}
+
+/* Footer */
+.vh-sync-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border-top: 1px solid #e9ecef;
+}
+
+.vh-user-info {
+  font-size: 12px;
+  color: #6c757d;
+}
+
+.vh-user-info.vh-authenticated {
+  color: #28a745;
+}
+
+.vh-login-link {
+  color: #E1306C;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.vh-login-link:hover {
+  text-decoration: underline;
+}
+
+.vh-btn-link {
+  background: none;
+  border: none;
+  padding: 6px;
+  cursor: pointer;
+  color: #6c757d;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.vh-btn-link:hover {
+  background: #e9ecef;
+  color: #495057;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .vh-etsy-sync-container {
+    bottom: 10px;
+    right: 10px;
+    left: 10px;
+  }
+
+  .vh-sync-panel {
+    width: 100%;
+  }
+}
+
+/* Animations */
+.vh-etsy-sync-container {
+  animation: slideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .vh-sync-panel {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .vh-sync-status {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .vh-status-text {
+    color: #e9ecef;
+  }
+
+  .vh-btn-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: #e9ecef;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .vh-btn-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .vh-sync-footer {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .vh-user-info {
+    color: #adb5bd;
+  }
+
+  .vh-progress-bar {
+    background: rgba(255, 255, 255, 0.1);
+  }
+}

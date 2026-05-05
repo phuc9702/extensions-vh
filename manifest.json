@@ -1,37 +1,120 @@
 {
-    "manifest_version": 3,
-    "name": "VH Extension",
-    "version": "1.0",
-    "description": "A professional Chrome extension built with modular structure.",
-    "api_url": "https://vhmediaco.app",
-    "icons": {
+  "manifest_version": 3,
+  "name": "VH Extension",
+  "version": "1.1.0",
+  "description": "Import products from AliExpress/Temu/Amazon and sync Etsy orders to VH database.",
+  "api_url": "https://vhmediaco.app",
+  "icons": {
     "16": "assets/icons/logovhex.png",
     "48": "assets/icons/logovhex.png",
     "128": "assets/icons/logovhex.png"
-    },
-    "action": {
-      "default_popup": "popup/popup.html",
-      "default_icon": {
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
       "16": "assets/icons/logovhex.png",
       "48": "assets/icons/logovhex.png",
       "128": "assets/icons/logovhex.png"
     }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.aliexpress.com/item/*",
+        "*://*.aliexpress.us/item/*",
+        "*://temu.com/*",
+        "*://*.temu.com/*",
+        "*://*.etsy.com/listing/*",
+        "*://*.amazon.com/dp/*",
+        "*://*.amazon.com/*/dp/*",
+        "*://*.amazon.com/gp/product/*"
+      ],
+      "js": [
+        "lib/jquery-3.6.0.min.js",
+        "lib/bootstrap.min.js",
+        "lib/popper.min.js",
+        "lib/jwt-decode.min.js",
+        "content/btnImportProduct.js"
+      ],
+      "css": [
+        "lib/bootstrap.min.css",
+        "css/btnallScript.css"
+      ]
     },
-    "content_scripts": [
-      {
-        "matches": ["*://*.aliexpress.us/item/*","*://*.aliexpress.com/item/*"],
-        "js": ["lib/jwt-decode.min.js","lib/bootstrap.min.js","lib/popper.min.js","content/btnImportProduct.js","lib/jquery-3.6.0.min.js"],
-        "css":["css/btnallScript.css","lib/bootstrap.min.css"]
-      },
-      {
-        "matches": ["*://*.aliexpress.us/*"],
-        "js": ["lib/jwt-decode.min.js"]
-      }
-    ],
-    "permissions": [
-      "activeTab",
-      "storage",
-      "tabs"
+    {
+      "matches": [
+        "*://*.etsy.com/your/orders/*",
+        "*://*.etsy.com/your/orders",
+        "*://*.etsy.com/your/shops/*/orders*",
+        "*://www.etsy.com/your/shops/*/tools/order-manager*"
+      ],
+      "js": [
+        "lib/jwt-decode.min.js",
+        "content/orderScraper.js",
+        "content/syncButton.js"
+      ],
+      "css": [
+        "css/syncButton.css"
+      ]
+    },
+    {
+      "matches": [
+        "*://*.etsy.com/listing/*",
+        "*://*.etsy.com/search*",
+        "*://*.etsy.com/c/*",
+        "*://*.etsy.com/market/*",
+        "*://*.amazon.com/dp/*",
+        "*://*.amazon.com/*/dp/*",
+        "*://*.amazon.com/gp/product/*"
+      ],
+      "js": [
+        "content/imageScraper.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "alarms",
+    "notifications",
+    "identity"
+  ],
+  "oauth2": {
+    "client_id": "766365154043-gldq7hg857aiqganf7qc8hdhdma48b3o.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive"
     ]
-  }
-  
+  },
+  "host_permissions": [
+    "https://vhmediaco.app/*",
+    "https://*.vhmediaco.app/*",
+    "https://vhmediaco.app/*",
+    "*://*.etsy.com/*",
+    "*://*.etsystatic.com/*",
+    "*://*.amazon.com/*",
+    "*://m.media-amazon.com/*",
+    "*://images-na.ssl-images-amazon.com/*",
+    "https://www.googleapis.com/*",
+    "https://accounts.google.com/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "css/*",
+        "assets/*"
+      ],
+      "matches": [
+        "*://*.aliexpress.com/*",
+        "*://*.aliexpress.us/*",
+        "*://*.temu.com/*",
+        "*://*.etsy.com/*",
+        "*://*.amazon.com/*"
+      ]
+    }
+  ]
+}

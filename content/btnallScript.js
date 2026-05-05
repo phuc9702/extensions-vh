@@ -33,7 +33,7 @@ window.onload = async() => {
 async function refreshAccessToken() {
     const { refreshToken } = await chrome.storage.local.get('refreshToken'); 
 
-    const response = await fetch('http://localhost:8000/api/token/refresh/', {  
+    const response = await fetch('https://vhmediaco.app/api/token/refresh/', {  
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

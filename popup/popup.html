@@ -1,59 +1,302 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AliScraper</title>
-    <link rel="stylesheet" href="popup.css">
-    <link rel="stylesheet" href="../lib/bootstrap.min.js">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VH Extension</title>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-    <div class="popup-container">
-        <!-- Popup Header -->
-        <div class="popup-header">
-            <div class="tab-container">
-                <button class="tab-button active" id="loginTab">Login</button>
-                <button class="tab-button" id="homeTab">Home</button>
-                <button class="tab-button" id="settingsTab">Settings</button>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="popup-header">
+      <div class="logo-section">
+        <div class="logo">VH</div>
+        <div class="brand">
+          <h1>VH Extension</h1>
+          <span class="version">v1.1.0</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="popup-nav">
+      <button class="nav-tab active" data-tab="home">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        Home
+      </button>
+      <button class="nav-tab" data-tab="settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+        Settings
+      </button>
+    </nav>
+
+    <!-- Content -->
+    <main class="popup-content">
+      <!-- Login Section -->
+      <section class="tab-content login-section" id="loginSection">
+        <div class="login-card">
+          <div class="login-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <h2>Welcome!</h2>
+          <p class="login-subtitle">Sign in to sync your Etsy orders</p>
+          <form id="loginForm" class="login-form">
+            <div class="form-group">
+              <label for="username">Username / Email</label>
+              <div class="input-wrapper">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+                <input type="text" id="username" name="username" placeholder="username or email" required>
+              </div>
             </div>
+            <div class="form-group">
+              <label for="password">Password</label>
+              <div class="input-wrapper">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0110 0v4"/>
+                </svg>
+                <input type="password" id="password" name="password" placeholder="••••••••" required>
+                <button type="button" class="toggle-password" tabindex="-1">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="eye-icon">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-login">
+              <span class="btn-text">Sign In</span>
+              <span class="btn-loader" style="display: none;">
+                <svg class="spinner" width="20" height="20" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.4" stroke-dashoffset="10"/>
+                </svg>
+              </span>
+            </button>
+          </form>
+          <div id="loginError" class="error-message" style="display: none;"></div>
+        </div>
+      </section>
+
+      <!-- Home Section -->
+      <section class="tab-content home-section" id="homeSection" style="display: none;">
+        <div class="welcome-card">
+          <div class="user-avatar">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <div class="welcome-text">
+            <h2>Hello, <span id="usernameDisplay">User</span>!</h2>
+            <p class="status-text">Ready to sync orders</p>
+          </div>
         </div>
 
-        <!-- Popup Body -->
-        <div class="popup-body">
-            <div class="login-content" id="loginContent" style="display: none;">
-                 <h2>Welcome to Spocket!</h2>
-                <form id="loginForm">
-                    <div class="input-container">
-                        <label for="username">Email</label>
-                        <input type="text" id="username" name="username" placeholder="Enter your username" required />
-                    </div>
-                    <div class="input-container">
-                        <label for="password">Password</label>
-                        <input type="password" id="password" name="password" placeholder="Enter your password" required />
-                    </div>
-                    <button type="submit" class="login-button">Login</button>
-                </form>
-                <div id="status"></div>
-            </div>
-           <div class="home-content" id="homeContent" style="display: none;">
-            <h1>Hello, <span id="usernameDisplay">Username</span>!</h1>
-            </div>
-
-            <div class="settings-content" id="settingsContent" style="display: none;">
-                <h1>Settings</h1>
-                <p>Adjust your preferences.</p>
-                <button id="logoutButton" class="logout-button">Logout</button>
-            </div>
-
+        <!-- Shop Name Input -->
+        <div class="shop-name-card">
+          <div class="shop-name-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            <span>Etsy Shop Name</span>
+          </div>
+          <div class="shop-name-input-wrapper">
+            <input type="text" id="shopNameInput" placeholder="Enter your Etsy shop name" />
+            <button type="button" id="saveShopNameBtn" class="btn-save-shop">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+              </svg>
+            </button>
+          </div>
+          <p class="shop-name-hint" id="shopNameHint">Find this in your Etsy URL: etsy.com/your/shops/<strong>YourShopName</strong>/orders</p>
         </div>
 
-        <!-- Popup Footer -->
-        <div class="popup-footer">
-            <p class="footer-text">Powered by <a href="https://vhmediaco.app/" target="_blank" class="footer-link">VHapp</a></p>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+                <path d="M22 4L12 14.01l-3-3"/>
+              </svg>
+            </div>
+            <div class="stat-value" id="syncedCount">0</div>
+            <div class="stat-label">Synced Today</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon warning">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
+            <div class="stat-value" id="pendingCount">0</div>
+            <div class="stat-label">Pending</div>
+          </div>
         </div>
-    </div>
-    <script src="../lib/bootstrap.min.js"></script>
-    <script src="../lib/jwt-decode.min.js"></script>
-    <script src="popup.js"></script>
+
+        <div class="quick-actions">
+          <h3>Quick Actions</h3>
+          <a href="https://www.etsy.com/your/orders/sold" target="_blank" class="action-link">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            Open Etsy Orders
+          </a>
+          <a href="https://www.aliexpress.com" target="_blank" class="action-link">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="9" cy="21" r="1"/>
+              <circle cx="20" cy="21" r="1"/>
+              <path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/>
+            </svg>
+            Browse AliExpress
+          </a>
+          <a href="https://vhmediaco.app/ecommerce/orders" target="_blank" class="action-link">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="3" y1="9" x2="21" y2="9"/>
+              <line x1="9" y1="21" x2="9" y2="9"/>
+            </svg>
+            View Dashboard
+          </a>
+        </div>
+
+        <!-- Google Drive Connection -->
+        <div class="gdrive-card">
+          <div class="gdrive-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/>
+              <polyline points="13 2 13 9 20 9"/>
+            </svg>
+            <span>Google Drive - Image Scraper</span>
+          </div>
+          <p class="gdrive-description">Connect Google Drive to save product images from Etsy & Amazon.</p>
+          <div class="gdrive-status" id="gdriveStatus">
+            <span class="gdrive-status-dot disconnected"></span>
+            <span class="gdrive-status-text">Not connected</span>
+          </div>
+          <div class="gdrive-actions">
+            <button class="btn btn-gdrive-connect" id="gdriveConnectBtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/>
+                <polyline points="10 17 15 12 10 7"/>
+                <line x1="15" y1="12" x2="3" y2="12"/>
+              </svg>
+              Connect Google Drive
+            </button>
+            <button class="btn btn-gdrive-disconnect" id="gdriveDisconnectBtn" style="display:none;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+              Disconnect
+            </button>
+          </div>
+          <p class="gdrive-hint">Go to an Etsy listing or Amazon product page, then click "📸 Save Images to Drive".</p>
+        </div>
+      </section>
+
+      <!-- Settings Section -->
+      <section class="tab-content settings-section" id="settingsSection" style="display: none;">
+        <div class="settings-group">
+          <h3>Account</h3>
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-label">Logged in as</span>
+              <span class="setting-value" id="settingsUsername">-</span>
+            </div>
+          </div>
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-label">Shop Name</span>
+              <span class="setting-value" id="settingsShopName">Not set</span>
+            </div>
+          </div>
+          <button class="btn btn-danger btn-logout" id="logoutBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            Sign Out
+          </button>
+        </div>
+
+        <div class="settings-group">
+          <h3>Sync Settings</h3>
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-label">Auto-sync</span>
+              <span class="setting-description">Automatically sync new orders</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="autoSyncToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-item" id="autoSyncIntervalContainer" style="display: none;">
+            <div class="setting-info">
+              <span class="setting-label">Sync interval</span>
+              <span class="setting-description">How often to auto-sync</span>
+            </div>
+            <select id="autoSyncInterval" class="setting-select">
+              <option value="1">Every 1 minute</option>
+              <option value="3">Every 3 minutes</option>
+              <option value="5" selected>Every 5 minutes</option>
+              <option value="10">Every 10 minutes</option>
+              <option value="15">Every 15 minutes</option>
+              <option value="30">Every 30 minutes</option>
+            </select>
+          </div>
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-label">Notifications</span>
+              <span class="setting-description">Show sync notifications</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="notificationsToggle" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3>About</h3>
+          <div class="about-info">
+            <p><strong>VH Extension</strong></p>
+            <p>Version 1.1.0</p>
+            <p>Import products & sync orders</p>
+            <p class="copyright">© 2025 VH Media Co.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="popup-footer">
+      <p>Powered by <a href="https://vhmediaco.app" target="_blank">VH Media Co.</a></p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
 </body>
 </html>
