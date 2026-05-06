@@ -92,6 +92,25 @@
       }
     },
 
+    // Parse Etsy "Ordered 2:02am, Tue, May 5, 2026" → ISO string
+    parseEtsyOrderedDate: (timeStr, dateStr) => {
+      try {
+        const timeParts = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+        if (!timeParts) return Utils.formatDate(dateStr);
+        let h = parseInt(timeParts[1]);
+        const m = parseInt(timeParts[2]);
+        const ampm = timeParts[3].toLowerCase();
+        if (ampm === 'pm' && h !== 12) h += 12;
+        if (ampm === 'am' && h === 12) h = 0;
+        const d = new Date(`${dateStr} 00:00:00`);
+        if (isNaN(d)) return null;
+        d.setHours(h, m, 0, 0);
+        return isNaN(d) ? null : d.toISOString();
+      } catch {
+        return null;
+      }
+    },
+
     // Strip trailing "US letter" / "US LETTER" suffix from variation values
     // e.g. "T-shirt - L US letter" → "T-shirt - L"
     stripUSLetterSuffix: (s) => {
@@ -214,13 +233,8 @@
         try {
           const order = this.scrapeOrderRow(row);
           if (order && order.order_id) {
-            // Try to get more details by clicking on order to open detail panel
-            if (!order.address_1) {
-              const enrichedOrder = await this.enrichOrderWithDetails(row, order);
-              orders.push(enrichedOrder);
-            } else {
-              orders.push(order);
-            }
+            const enrichedOrder = await this.enrichOrderWithDetails(row, order);
+            orders.push(enrichedOrder);
           }
         } catch (e) {
           console.error('Error scraping order row:', e);
@@ -240,12 +254,16 @@
         if (orderLink) {
           const expectedOrderNum = order.order_id.replace('ETSY-', '');
 
-          const findPanel = () =>
-            document.querySelector('[data-clg-id="wtTabPanel"]') ||
-            document.querySelector('.wt-overflow-y-scroll') ||
-            document.querySelector('[class*="peek-overlay"]') ||
-            document.querySelector('.order-details-panel') ||
-            document.querySelector('[role="dialog"]');
+          const findPanel = () => {
+            // Ưu tiên peek-overlay (panel phải) — tránh match panel danh sách bên trái
+            const peek = document.querySelector('[class*="peek-overlay"]');
+            if (peek) return peek;
+            // Tìm WtTabPanel bên trong bất kỳ container nào (case-sensitive)
+            const tabPanel = document.querySelector('[data-clg-id="WtTabPanel"]');
+            if (tabPanel) return tabPanel.closest('.wt-overflow-y-scroll') || tabPanel;
+            return document.querySelector('.order-details-panel') ||
+                   document.querySelector('[role="dialog"]');
+          };
 
           // If the panel already shows the right order, skip the click
           const existingPanel = findPanel();
@@ -271,6 +289,28 @@
           if (!panel || !panel.textContent.includes(expectedOrderNum)) {
             console.warn(`[VH Scraper] Panel mismatch for order ${expectedOrderNum}, skipping enrichment`);
             return order;
+          }
+
+          // Get order creation date from panel
+          const orderDescEl = panel.querySelector('[data-testid="order-description"]');
+          const orderedText = orderDescEl ? orderDescEl.textContent : panel.textContent;
+          const dateNewMatch = orderedText.match(/Ordered\s+(\d{1,2}:\d{2}(?:am|pm)),\s*\w+,\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
+          if (dateNewMatch) {
+            order.date_created = Utils.parseEtsyOrderedDate(dateNewMatch[1], dateNewMatch[2]);
+          } else {
+            const dateOldMatch = orderedText.match(/Ordered\s+([A-Za-z]{3}\s+\d{1,2},?\s*\d{4}|\d{1,2}\/\d{1,2}\/\d{4})/);
+            if (dateOldMatch) order.date_created = Utils.formatDate(dateOldMatch[1]);
+          }
+
+          // Get earned revenue from Earnings tab panel
+          const earnedEl = panel.querySelector('.wt-text-title-large.wt-display-inline');
+          if (earnedEl) {
+            const { amount } = Utils.parsePrice(Utils.safeText(earnedEl));
+            if (amount !== null) order.revenue = amount;
+          }
+          if (!order.revenue) {
+            const earnedMatch = panel.textContent.match(/You earned\s*\$?([\d,.]+)/i);
+            if (earnedMatch) order.revenue = parseFloat(earnedMatch[1].replace(',', ''));
           }
 
           // Try to find address with multiple selectors
@@ -503,10 +543,15 @@
       }
 
       // === ORDER DATE ===
-      // From: "Ordered Dec 24, 2025" or "Ordered 12/24/2025"
-      const orderedMatch = row.textContent.match(/Ordered\s+([A-Za-z]{3}\s+\d{1,2},?\s*\d{4}|\d{1,2}\/\d{1,2}\/\d{4})/);
-      if (orderedMatch) {
-        order.date_created = Utils.formatDate(orderedMatch[1]);
+      // New format: "Ordered 2:02am, Tue, May 5, 2026"
+      const orderedNewMatch = row.textContent.match(/Ordered\s+(\d{1,2}:\d{2}(?:am|pm)),\s*\w+,\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
+      if (orderedNewMatch) {
+        order.date_created = Utils.parseEtsyOrderedDate(orderedNewMatch[1], orderedNewMatch[2]);
+      }
+      // Old format: "Ordered Dec 24, 2025" or "Ordered 12/24/2025"
+      if (!order.date_created) {
+        const orderedMatch = row.textContent.match(/Ordered\s+([A-Za-z]{3}\s+\d{1,2},?\s*\d{4}|\d{1,2}\/\d{1,2}\/\d{4})/);
+        if (orderedMatch) order.date_created = Utils.formatDate(orderedMatch[1]);
       }
 
       // === SHIPPING ADDRESS ===
@@ -1379,6 +1424,17 @@
         order.order_id = `ETSY-${receiptMatch[1]}`;
       }
 
+      // === ORDER DATE ===
+      const orderDescEl = peekPanel.querySelector('[data-testid="order-description"]');
+      const orderedText = orderDescEl ? orderDescEl.textContent : peekPanel.textContent;
+      const dateNewMatch = orderedText.match(/Ordered\s+(\d{1,2}:\d{2}(?:am|pm)),\s*\w+,\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i);
+      if (dateNewMatch) {
+        order.date_created = Utils.parseEtsyOrderedDate(dateNewMatch[1], dateNewMatch[2]);
+      } else {
+        const dateOldMatch = orderedText.match(/Ordered\s+([A-Za-z]{3}\s+\d{1,2},?\s*\d{4}|\d{1,2}\/\d{1,2}\/\d{4})/);
+        if (dateOldMatch) order.date_created = Utils.formatDate(dateOldMatch[1]);
+      }
+
       // === CUSTOMER NAME ===
       // From: span.name or Mary Struve in address section
       const nameEl = peekPanel.querySelector('span.name, .address span[class="name"]');
@@ -1439,10 +1495,20 @@
       }
 
       // === TOTALS ===
-      // Order total
-      const orderTotalMatch = peekPanel.textContent.match(/Order total\s*\$?([\d,.]+)/i);
-      if (orderTotalMatch) {
-        order.revenue = parseFloat(orderTotalMatch[1].replace(',', ''));
+      // Earned amount (Earnings tab: "You earned $32.37 on this order")
+      const earnedEl = peekPanel.querySelector('.wt-text-title-large.wt-display-inline');
+      if (earnedEl) {
+        const { amount } = Utils.parsePrice(Utils.safeText(earnedEl));
+        if (amount !== null) order.revenue = amount;
+      }
+      if (!order.revenue) {
+        const earnedMatch = peekPanel.textContent.match(/You earned\s*\$?([\d,.]+)/i);
+        if (earnedMatch) order.revenue = parseFloat(earnedMatch[1].replace(',', ''));
+      }
+      // Fallback: Order total
+      if (!order.revenue) {
+        const orderTotalMatch = peekPanel.textContent.match(/Order total\s*\$?([\d,.]+)/i);
+        if (orderTotalMatch) order.revenue = parseFloat(orderTotalMatch[1].replace(',', ''));
       }
 
       // Shipping cost
