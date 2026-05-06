@@ -93,19 +93,29 @@
     },
 
     // Parse Etsy "Ordered 2:02am, Tue, May 5, 2026" → ISO string
+    // Không dùng new Date() để tránh browser timezone làm lệch ngày
     parseEtsyOrderedDate: (timeStr, dateStr) => {
       try {
+        const MONTHS = {Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
         const timeParts = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
-        if (!timeParts) return Utils.formatDate(dateStr);
+        if (!timeParts) return null;
         let h = parseInt(timeParts[1]);
         const m = parseInt(timeParts[2]);
         const ampm = timeParts[3].toLowerCase();
         if (ampm === 'pm' && h !== 12) h += 12;
         if (ampm === 'am' && h === 12) h = 0;
-        const d = new Date(`${dateStr} 00:00:00`);
-        if (isNaN(d)) return null;
-        d.setHours(h, m, 0, 0);
-        return isNaN(d) ? null : d.toISOString();
+        const dateParts = dateStr.match(/([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})/);
+        if (!dateParts) return null;
+        const month = MONTHS[dateParts[1].slice(0, 3)];
+        if (!month) return null;
+        const day = parseInt(dateParts[2]);
+        const year = parseInt(dateParts[3]);
+        const hStr = String(h).padStart(2, '0');
+        const mStr = String(m).padStart(2, '0');
+        const monthStr = String(month).padStart(2, '0');
+        const dayStr = String(day).padStart(2, '0');
+        // Gửi y chang giờ Etsy hiển thị, không convert timezone
+        return `${year}-${monthStr}-${dayStr}T${hStr}:${mStr}:00.000Z`;
       } catch {
         return null;
       }
