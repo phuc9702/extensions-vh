@@ -114,8 +114,8 @@
         const mStr = String(m).padStart(2, '0');
         const monthStr = String(month).padStart(2, '0');
         const dayStr = String(day).padStart(2, '0');
-        // Gửi y chang giờ Etsy hiển thị, không convert timezone
-        return `${year}-${monthStr}-${dayStr}T${hStr}:${mStr}:00.000Z`;
+        // Gửi y chang giờ Etsy hiển thị, không có timezone suffix
+        return `${year}-${monthStr}-${dayStr}T${hStr}:${mStr}:00`;
       } catch {
         return null;
       }
