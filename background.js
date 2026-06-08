@@ -3,6 +3,8 @@
  * Handles API calls for both AliExpress import and Etsy order sync
  */
 
+try { importScripts('./lib/pdf-lib.min.js'); } catch (e) { console.warn('[SW] pdf-lib not loaded:', e.message); }
+
 const API_TIMEOUT_MS = 60000; // 60 seconds
 
 async function fetchWithTimeout(resource, options = {}) {
@@ -325,6 +327,151 @@ function getExtFromMime(mime) {
     'image/bmp': '.bmp',
   };
   return map[mime] || '.jpg';
+}
+
+// ─── PDF Label Bounds Detection ───
+
+async function inflatePdfStream(bytes) {
+  for (const [fmt, data] of [['deflate', bytes], ['deflate-raw', bytes.slice(2)]]) {
+    try {
+      const ds = new DecompressionStream(fmt);
+      const writer = ds.writable.getWriter();
+      const readPromise = new Response(ds.readable).arrayBuffer();
+      // Properly chain writer to avoid unhandled promise rejections
+      writer.write(data).then(() => writer.close()).catch(() => {});
+      const ab = await readPromise;
+      return new Uint8Array(ab);
+    } catch(e) {}
+  }
+  return bytes;
+}
+
+async function detectLabelBounds(pdfDoc, page) {
+  const { PDFName } = PDFLib;
+  const { width: pageW, height: pageH } = page.getSize();
+  try {
+    const allBytes = [];
+    const processObj = async (obj) => {
+      let resolved;
+      try { resolved = pdfDoc.context.lookup(obj); } catch(e) { resolved = obj; }
+      if (!resolved) return;
+      if (typeof resolved.size === 'function') {
+        for (let j = 0; j < resolved.size(); j++) await processObj(resolved.get(j));
+        return;
+      }
+      if (resolved.contents instanceof Uint8Array) {
+        let bytes = resolved.contents;
+        try {
+          const filter = resolved.dict?.get(PDFName.of('Filter'));
+          if (filter && /Flat|\/Fl\b/.test(filter.toString())) bytes = await inflatePdfStream(bytes);
+        } catch(e) {}
+        allBytes.push(bytes);
+      }
+    };
+    const contentsRef = page.node.get(PDFName.of('Contents'));
+    if (!contentsRef) return null;
+    await processObj(contentsRef);
+    if (!allBytes.length) return null;
+    const totalLen = allBytes.reduce((s, b) => s + b.length, 0);
+    const combined = new Uint8Array(totalLen);
+    let off = 0;
+    for (const b of allBytes) { combined.set(b, off); off += b.length; }
+    const text = new TextDecoder('latin1').decode(combined);
+    const rects = [];
+    const re = /(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+re\b/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const x = +m[1], y = +m[2], w = +m[3], h = +m[4];
+      const area = Math.abs(w * h);
+      if (area > 5000) rects.push({ x, y, w, h, area });
+    }
+    console.log(`[SW Rotate] Found ${rects.length} rects in stream:`, rects.map(r => `(${r.x.toFixed(0)},${r.y.toFixed(0)},${r.w.toFixed(0)},${r.h.toFixed(0)})`).join(' | '));
+    if (!rects.length) return null;
+    rects.sort((a, b) => b.area - a.area);
+    const r = rects[0];
+    let lx = Math.round(r.w >= 0 ? r.x : r.x + r.w);
+    let ly = Math.round(r.h >= 0 ? r.y : r.y + r.h);
+    let lw = Math.round(Math.abs(r.w));
+    let lh = Math.round(Math.abs(r.h));
+    // Discard if too small to be the label
+    if (lw < pageW * 0.3 || lh < pageH * 0.2) {
+      console.log(`[SW Rotate] Detected rect too small, skipping`);
+      return null;
+    }
+    // Add 15pt padding to avoid clipping at borders
+    const PAD = 15;
+    lx = Math.max(0, lx - PAD);
+    ly = Math.max(0, ly - PAD);
+    lw = Math.min(pageW - lx, lw + 2 * PAD);
+    lh = Math.min(pageH - ly, lh + 2 * PAD);
+    console.log(`[SW Rotate] Auto-detected (padded): lx=${lx} ly=${ly} lw=${lw} lh=${lh}`);
+    return { lx, ly, lw, lh };
+  } catch (e) {
+    console.warn('[SW Rotate] detectLabelBounds error:', e.message);
+    return null;
+  }
+}
+
+// ─── PDF Rotation Helper ───
+
+/**
+ * Rotate landscape pages in a shipping label PDF to portrait using pdf-lib.
+ * Goshippo / Whatnot labels are generated in landscape (wider than tall).
+ * After rotation the label displays correctly (vertically) in Google Drive.
+ */
+async function rotateLabelPdfToPortrait(blob) {
+  if (typeof PDFLib === 'undefined') {
+    console.warn('[SW] pdf-lib not available, skipping rotation');
+    return blob;
+  }
+  console.log('[SW Rotate] pdf-lib available, starting rotation');
+  try {
+    const { PDFDocument, degrees } = PDFLib;
+    const ab = await blob.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(ab, { ignoreEncryption: true });
+    const pages = pdfDoc.getPages();
+    console.log(`[SW Rotate] Total pages: ${pages.length}`);
+    let rotated = false;
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const { width, height } = page.getSize();
+      const currentAngle = page.getRotation().angle;
+      console.log(`[SW Rotate] Page ${i+1}: w=${width.toFixed(1)} h=${height.toFixed(1)} angle=${currentAngle} landscape=${width > height}`);
+      if (width > height && (currentAngle === 0 || currentAngle === 180)) {
+        // Actual landscape page → rotate to portrait
+        page.setRotation(degrees(270));
+        rotated = true;
+        console.log(`[SW Rotate] Page ${i+1}: landscape page → rotated 270deg`);
+      } else if (height > width && currentAngle === 0) {
+        try {
+          const mb = page.getMediaBox();
+          const cb = page.getCropBox ? page.getCropBox() : null;
+          console.log(`[SW Rotate] Page ${i+1} boxes:`);
+          console.log(`  MediaBox: [${mb.x.toFixed(1)}, ${mb.y.toFixed(1)}, ${(mb.x+mb.width).toFixed(1)}, ${(mb.y+mb.height).toFixed(1)}]  (w=${mb.width.toFixed(1)} h=${mb.height.toFixed(1)})`);
+          if (cb) console.log(`  CropBox:  [${cb.x.toFixed(1)}, ${cb.y.toFixed(1)}, ${(cb.x+cb.width).toFixed(1)}, ${(cb.y+cb.height).toFixed(1)}]`);
+        } catch (logErr) { console.warn('[SW Rotate] box log error:', logErr.message); }
+        const bounds = await detectLabelBounds(pdfDoc, page);
+        // Fallback: proportional to page size with extra margin (calibrated for GoShippo half-sheet)
+        const lx = bounds?.lx ?? Math.round(width * 0.11);   // ~80pt
+        const ly = bounds?.ly ?? Math.round(height * 0.52);  // ~411pt (lower than old 430)
+        const lw = bounds?.lw ?? Math.round(width * 0.78);   // ~464pt
+        const lh = bounds?.lh ?? Math.round(height * 0.44);  // ~340pt (larger than old 290)
+        page.setMediaBox(lx, ly, lw, lh);
+        page.setRotation(degrees(90));
+        rotated = true;
+        console.log(`[SW Rotate] Page ${i+1}: crop [${lx},${ly},${lx+lw},${ly+lh}] w=${lw} h=${lh} + Rotate=90 (${bounds ? 'auto' : 'fallback'})`);
+      } else {
+        console.log(`[SW Rotate] Page ${i+1}: angle=${currentAngle}, skipped`);
+      }
+    }
+    if (!rotated) { console.log('[SW Rotate] No pages rotated, returning original'); return blob; }
+    const saved = await pdfDoc.save();
+    console.log(`[SW Rotate] Done, saved ${(saved.byteLength/1024).toFixed(1)} KB`);
+    return new Blob([saved], { type: 'application/pdf' });
+  } catch (e) {
+    console.warn('[SW] PDF rotation failed, using original:', e.message);
+    return blob;
+  }
 }
 
 // ─── Main Message Listener ───
@@ -759,6 +906,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // === ETSY: Generic Fetch (content scripts can't make cross-origin requests directly) ===
+  if (message?.type === 'ETSY_FETCH') {
+    (async () => {
+      try {
+        const { url, options = {} } = message.payload || {};
+        if (!url) throw new Error('No URL provided');
+
+        const res = await fetchWithTimeout(url, { ...options, timeout: 15000 });
+        const text = await res.text();
+
+        let data;
+        try { data = JSON.parse(text); } catch { data = text; }
+
+        sendResponse({ ok: res.ok, status: res.status, data });
+      } catch (err) {
+        console.error('[SW] ETSY_FETCH error:', err.message);
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
   // === ETSY: Sync Orders ===
   if (message?.type === 'ETSY_API_POST') {
     (async () => {
@@ -871,6 +1040,94 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (err) {
         console.error('🔴 [SW] Refresh error:', err.message);
         sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // === WHATNOT: Download label PDF and upload to Google Drive ===
+  // Downloads from goshipo/shippo URL (CORS-free in SW), uploads as PDF, makes public, returns webViewLink.
+
+  if (message?.type === 'UPLOAD_LABEL_TO_DRIVE') {
+    (async () => {
+      try {
+        const { pdfUrl, fileName, folderId } = message.payload || {};
+        if (!pdfUrl) throw new Error('No PDF URL');
+
+        // Auth
+        let token;
+        try { token = await getGoogleAuthToken(false); }
+        catch { token = await getGoogleAuthToken(true); }
+        if (!token) throw new Error('Not authenticated');
+
+        // Resolve target folder
+        const resolved = await resolveTargetFolder(token, folderId);
+
+        // Download PDF from goshipo (SW has no CORS restriction)
+        console.log(`📥 [SW] Downloading label: ${pdfUrl.substring(0, 80)}...`);
+        const res = await fetchWithTimeout(pdfUrl, { timeout: 30000 });
+        if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+        let blob = await res.blob();
+        console.log(`✅ [SW] Label downloaded: ${(blob.size / 1024).toFixed(1)} KB`);
+
+        // Rotate landscape pages to portrait (goshippo labels are landscape by default)
+        blob = await rotateLabelPdfToPortrait(blob);
+
+        // Upload to Drive as PDF
+        const safeName = (fileName || 'label').replace(/[\\/:*?"<>|]/g, '_');
+        const result = await uploadToDrive(
+          token, blob, `${safeName}.pdf`,
+          resolved.folderId, 'application/pdf', resolved.driveId
+        );
+        console.log(`✅ [SW] Label uploaded to Drive: ${result.id}`);
+
+        // Make the file readable by anyone with the link
+        await fetch(
+          `https://www.googleapis.com/drive/v3/files/${result.id}/permissions?supportsAllDrives=true`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+          }
+        );
+
+        // Get fresh file metadata with webViewLink
+        const metaRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${result.id}?fields=id,name,webViewLink,webContentLink&supportsAllDrives=true`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const meta = metaRes.ok ? await metaRes.json() : result;
+        const driveLink = meta.webViewLink || meta.webContentLink || result.webViewLink || '';
+        console.log(`🔗 [SW] Drive label link: ${driveLink}`);
+
+        sendResponse({ ok: true, driveLink, fileId: result.id });
+      } catch (err) {
+        console.error('🔴 [SW] Label upload error:', err.message);
+        sendResponse({ ok: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // === WHATNOT: Relay shipment data from shipment tab → orders tab ===
+  // When the auto-opened shipment page captures fileUrl, it sends this message.
+  // Background forwards it to all Whatnot orders tabs and closes the shipment tab.
+  if (message?.type === 'WN_SHIPMENT_RELAYED') {
+    (async () => {
+      try {
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          if (tab.id !== sender.tab?.id && (tab.url || '').includes('whatnot.com/dashboard/orders')) {
+            chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+          }
+        }
+        // Close the auto-opened shipment tab after relay is confirmed
+        if (sender.tab?.id && (sender.tab?.url || '').includes('/dashboard/shipments/')) {
+          setTimeout(() => chrome.tabs.remove(sender.tab.id).catch(() => {}), 3000);
+        }
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false });
       }
     })();
     return true;

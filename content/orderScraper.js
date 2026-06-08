@@ -141,8 +141,48 @@
   class EtsyOrderScraper {
     constructor() {
       this.orders = [];
-      this._typeMap = null;        // cached type mappings from API
-      this._colorStyleMap = null;  // cached color-style mappings from API
+      this._typeMap = null;
+      this._colorStyleMap = null;
+      this._shopId = null;
+    }
+
+    // Extract Etsy numeric shop ID from XHR resource URLs already loaded by the page
+    async getShopId() {
+      if (this._shopId) return this._shopId;
+      // Method 1: scan performance resource URLs (XHR/fetch made by Etsy SPA)
+      try {
+        for (const res of performance.getEntriesByType('resource')) {
+          const m = res.name.match(/\/api\/v3\/ajax\/shop\/(\d+)\//);
+          if (m) { this._shopId = m[1]; return this._shopId; }
+        }
+      } catch {}
+      // Method 2: search embedded JSON in script tags
+      for (const script of document.querySelectorAll('script:not([src])')) {
+        const m = script.textContent.match(/"shop_id"\s*[:"]+\s*(\d+)/);
+        if (m) { this._shopId = m[1]; return this._shopId; }
+      }
+      return null;
+    }
+
+    // Call Etsy earnings API directly — no DOM scraping, no stale data
+    async fetchEarnings(orderId) {
+      const shopId = await this.getShopId();
+      if (!shopId) return null;
+      try {
+        const url = `https://www.etsy.com/api/v3/ajax/shop/${shopId}/mission-control/orders/earnings/${orderId}/details/all?include_refunded_labels=true&include_vat_in_sum=true`;
+        const resp = await fetch(url, {
+          credentials: 'include',
+          headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        if (data?.total?.amount !== undefined && data.total.divisor) {
+          return data.total.amount / data.total.divisor;
+        }
+      } catch (e) {
+        console.warn('[VH Scraper] fetchEarnings API failed:', e);
+      }
+      return null;
     }
 
     /**
@@ -154,8 +194,11 @@
       if (this._typeMap && this._colorStyleMap) return; // already loaded
 
       const DEFAULT_TYPE_MAP = {
-        'T-Shirt': 'T-shirt', 'Hoodie': 'Hoodie', 'Sweatshirt': 'Sweatshirt',
+        'T-Shirt': 'T-shirt', 'TShirt': 'T-shirt', 'Hoodie': 'Hoodie', 'Sweatshirt': 'Sweatshirt',
         'Comfort TShirt': 'Comfort colors t-shirt',
+        'Comfort T-shirt': 'Comfort colors t-shirt',
+        'Comfort Colors': 'Comfort colors t-shirt',
+        'Comfort': 'Comfort colors t-shirt',
         'Wash T-shirt': 'Mineral Wash Colortone 1300',
         'Tough Cases (iPhone)': 'Tough Cases (iPhone)',
         'Football Jersey': '3D-VN  Mesh football jersey',
@@ -178,7 +221,24 @@
         'Accent Mug': 'Accent Mug US 2',
         'Acrylic Keychain': 'Acrylic Keychain US',
         'Keychain': 'Acrylic Keychain US',
+        'Keychain 2 Side': 'Acrylic Keychain 2 side US',
+        'Keychain 2side': 'Acrylic Keychain 2 side US',
+        '2 Side Keychain': 'Acrylic Keychain 2 side US',
+        '2Side Keychain': 'Acrylic Keychain 2 side US',
         'Suncatcher': 'Window Hanging Suncatcher Ornaments 1 layer US',
+        'Normal Shirt': '3D-VN US HAWAIIAN SHIRT',
+        'Hawaiian Shirt': '3D-VN US HAWAIIAN SHIRT',
+        'Classic Dad Hat': 'Classic Dad Hat',
+        'Premium Embroidery': 'Classic Dad Hat',
+        'Classic Printed': 'Classic Dad Hat',
+        'Baseball Hat': 'Baseball Hat',
+        'Embroidery Baseball Hat': 'Baseball Hat',
+        'Trucker Hat': 'Trucker Hat',
+        'Double Printed Flag': '3D-VN USA Polyester and Double Printed Flag',
+        '3D Printed Flag': '3D-VN USA Polyester and Double Printed Flag',
+        'Flag': '3D-VN USA Polyester and Double Printed Flag',
+        'Greeting Card': 'Greetingcard',
+        'Card': 'Greetingcard',
       };
       const DEFAULT_COLOR_STYLE_MAP = {};
 
@@ -194,19 +254,40 @@
           return;
         }
 
-        const resp = await chrome.runtime.sendMessage({
+        const fetchTypeMappings = async (token) => chrome.runtime.sendMessage({
           type: 'ETSY_FETCH',
           payload: {
             url: `${apiUrl}/api/ecommerce/variant-type-mappings/`,
             options: {
               method: 'GET',
               headers: {
-                'Authorization': `Bearer ${accessToken}`,
+                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
               }
             }
           }
         });
+
+        let resp = await fetchTypeMappings(accessToken);
+
+        // Token expired → refresh and retry once
+        if (!resp?.ok && (resp?.status === 401 || resp?.data?.code === 'token_not_valid')) {
+          try {
+            const { refreshToken } = await chrome.storage.local.get('refreshToken');
+            if (refreshToken) {
+              const refreshResp = await chrome.runtime.sendMessage({
+                type: 'ETSY_REFRESH_TOKEN',
+                payload: { url: `${apiUrl}/api/token/refresh/`, refreshToken }
+              });
+              if (refreshResp?.ok && refreshResp?.accessToken) {
+                await chrome.storage.local.set({ accessToken: refreshResp.accessToken });
+                resp = await fetchTypeMappings(refreshResp.accessToken);
+              }
+            }
+          } catch (refreshErr) {
+            console.warn('[VH Scraper] Token refresh failed:', refreshErr);
+          }
+        }
 
         if (resp?.ok && resp?.data) {
           // Merge: defaults as base, API overrides on top
@@ -312,31 +393,38 @@
             if (dateOldMatch) order.date_created = Utils.formatDate(dateOldMatch[1]);
           }
 
-          // Get earned revenue from Earnings tab panel
-          const earnedEl = panel.querySelector('.wt-text-title-large.wt-display-inline');
-          if (earnedEl) {
-            const { amount } = Utils.parsePrice(Utils.safeText(earnedEl));
-            if (amount !== null) order.revenue = amount;
-          }
-          if (!order.revenue) {
-            const earnedMatch = panel.textContent.match(/You earned\s*\$?([\d,.]+)/i);
-            if (earnedMatch) order.revenue = parseFloat(earnedMatch[1].replace(',', ''));
+          // Fetch earned revenue directly from Etsy earnings API (reliable, no stale DOM data)
+          const earnedFromApi = await this.fetchEarnings(expectedOrderNum);
+          if (earnedFromApi !== null) {
+            order.revenue = earnedFromApi;
           }
 
-          // Try to find address with multiple selectors
+          // Poll until address div is rendered (may lag behind order number by a render cycle)
+          let addressDiv = null;
           const addressSelectors = [
             '.address.break-word.fs-mask',
             'div.address.fs-mask',
             '[class*="address"][class*="fs-mask"]',
             '.shipping-address',
-            '[data-region="shipping-address"]',
-            '.wt-break-word'
+            '[data-region="shipping-address"]'
           ];
-
-          let addressDiv = null;
-          for (const selector of addressSelectors) {
-            addressDiv = panel.querySelector(selector);
+          for (let waited = 0; waited < 2000; waited += 200) {
+            for (const selector of addressSelectors) {
+              const el = panel.querySelector(selector);
+              if (el && el.querySelector('span.first-line, span.city')) {
+                addressDiv = el;
+                break;
+              }
+            }
             if (addressDiv) break;
+            await Utils.wait(200);
+          }
+          // Fallback: any selector match even without spans
+          if (!addressDiv) {
+            for (const selector of addressSelectors) {
+              addressDiv = panel.querySelector(selector);
+              if (addressDiv) break;
+            }
           }
 
           if (addressDiv) {
@@ -414,20 +502,39 @@
                 }
               }
             }
+
+            // Extra fallback: if country still default, extract from last meaningful line of address text
+            if (order.country === 'United States' && addressDiv) {
+              const addrLines = addressDiv.textContent.split('\n').map(l => l.trim()).filter(l => l);
+              for (let i = addrLines.length - 1; i >= 0; i--) {
+                const line = addrLines[i];
+                if (line && !line.startsWith('+') && !/^\d/.test(line) &&
+                    line !== order.customer_name && line.length > 2 &&
+                    !/^\d{3,5}\s+\w/.test(line)) {
+                  order.country = line;
+                  break;
+                }
+              }
+            }
+
+            // For non-US/CA/AU countries, state is not applicable
+            const countriesRequiringState = ['United States', 'Canada', 'Australia', 'Brazil', 'Mexico', 'India'];
+            if (!countriesRequiringState.includes(order.country)) {
+              order.state = order.state || '';
+            }
           }
 
-          // Get item prices from table
+          // Get item prices from table (same approach as scrapeOrderDetail: use cell index)
           const itemTable = panel.querySelector('table');
           if (itemTable && order.items.length > 0) {
             const rows = itemTable.querySelectorAll('tbody tr');
             let itemIndex = 0;
             rows.forEach((tr) => {
               if (tr.querySelector('th')) return;
-
-              const priceCell = tr.querySelector('td.text-right, td[class*="text-right"]');
-              if (priceCell && order.items[itemIndex]) {
-                const pTag = priceCell.querySelector('p');
-                const priceText = pTag ? Utils.safeText(pTag) : Utils.safeText(priceCell);
+              const cells = tr.querySelectorAll('td');
+              if (cells.length >= 3 && order.items[itemIndex]) {
+                const priceCell = cells[cells.length - 1];
+                const priceText = Utils.safeText(priceCell);
                 const priceMatch = priceText.match(/\$?([\d,.]+)/);
                 if (priceMatch) {
                   order.items[itemIndex].price = parseFloat(priceMatch[1].replace(',', ''));
@@ -567,7 +674,7 @@
       // === SHIPPING ADDRESS ===
       // Try multiple selectors for address
       // 1. From address div with fs-mask class
-      const addressDiv = row.querySelector('.address.break-word.fs-mask, div.address.fs-mask, .fs-mask');
+      const addressDiv = row.querySelector('.address.break-word.fs-mask, div.address.fs-mask');
       if (addressDiv) {
         // Customer name
         const nameEl = addressDiv.querySelector('span.name, .name');
@@ -607,11 +714,37 @@
       }
 
       // Fallback: parse from "Ship to City, State" text
+      // Only set state if the 2-letter code is a real US/CA state (not a country ISO code like FR, GB, DE)
+      const US_CA_STATES = new Set([
+        'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY',
+        'LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND',
+        'OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
+        'PR','GU','VI','AS','MP',
+        'AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'
+      ]);
       if (!order.city) {
-        const shipToMatch = row.textContent.match(/Ship to\s+([^,]+),\s*(\w{2})/i);
+        const shipToMatch = row.textContent.match(/Ship to\s+([^,]+),\s*([A-Z]{2})/i);
         if (shipToMatch) {
           order.city = shipToMatch[1].trim();
-          order.state = shipToMatch[2].trim();
+          const code = shipToMatch[2].toUpperCase();
+          if (US_CA_STATES.has(code)) {
+            order.state = code;
+          }
+          // Non-US/CA codes (FR, GB, DE...) are country codes, not states — ignore
+        }
+      }
+
+      // If country still default, try extracting from address div text (last meaningful line)
+      if (order.country === 'United States' && addressDiv) {
+        const addrLines = addressDiv.textContent.split('\n').map(l => l.trim()).filter(l => l);
+        for (let i = addrLines.length - 1; i >= 0; i--) {
+          const line = addrLines[i];
+          if (line && !line.startsWith('+') && !/^\d/.test(line) &&
+              line !== order.customer_name && line.length > 2 &&
+              !/^\d{3,5}\s+\w/.test(line)) {
+            order.country = line;
+            break;
+          }
         }
       }
 
@@ -751,6 +884,13 @@
         }
       }
 
+      // Last resort: grab ALL li in flag, skip the Quantity one
+      if (variationLis.length === 0) {
+        variationLis = Array.from(flagEl.querySelectorAll('li')).filter(li =>
+          !li.textContent.includes('Quantity')
+        );
+      }
+
       variationLis.forEach(li => {
         // Method 1: Try label + value pattern (li.clearfix style)
         const labelEl = li.querySelector('.text-gray-lighter');
@@ -792,7 +932,7 @@
               }
             }
           } else {
-            // Method 3: Just get text content if li has text
+            // Method 3: text content — colon separator ("Label: Value")
             const liText = Utils.safeText(li);
             if (liText && liText.includes(':')) {
               const [label, ...valueParts] = liText.split(':');
@@ -800,6 +940,19 @@
               const valueClean = valueParts.join(':').trim();
               if (labelClean && valueClean && labelClean !== 'Quantity') {
                 item.variations[labelClean] = Utils.normalizeVariationValue(valueClean);
+              }
+            } else if (liText) {
+              // Method 4: known-label prefix without colon ("Type  Premium Embroidery")
+              const KNOWN_LABELS = ['Type', 'Hat Type', 'Product Type', 'Style and Size', 'Style', 'Size', 'Sizes', 'Color', 'Colors',
+                'Shirt size', 'Unisex shirt size', 'Shirt Colors', 'Design', 'Option', 'SKU', 'Personalization'];
+              for (const lbl of KNOWN_LABELS) {
+                if (liText.startsWith(lbl) && liText.length > lbl.length) {
+                  const val = liText.slice(lbl.length).replace(/^[\s:]+/, '').trim();
+                  if (val && val !== 'Quantity') {
+                    item.variations[lbl] = Utils.normalizeVariationValue(val);
+                    break;
+                  }
+                }
               }
             }
           }
@@ -833,6 +986,14 @@
         }
       }
 
+      // 3. Treat CUSTOM variation key as personalization (e.g. Acrylic Keychain 2 side orders)
+      const customKey = Object.keys(item.variations).find(k => /^custom$/i.test(k));
+      if (customKey) {
+        const customVal = item.variations[customKey];
+        if (customVal && !item.personalization) item.personalization = customVal;
+        delete item.variations[customKey];
+      }
+
       // === BUILD SKU_NAME from variations ===
       // Example: "T-shirt - M, Black"
       const skuParts = [];
@@ -854,6 +1015,15 @@
       if (skuParts.length === 0) {
         for (const [key, value] of Object.entries(item.variations)) {
           skuParts.push(value);
+        }
+      }
+
+      // Also include values from unknown variation keys not already in skuParts
+      // (e.g. "Unisex Ringer T-Shirt": "XL" where key is not a known priority key)
+      const priorityKeySet = new Set(priorityKeys);
+      for (const [key, value] of Object.entries(item.variations)) {
+        if (!priorityKeySet.has(key) && !skuParts.includes(value)) {
+          skuParts.unshift(value);
         }
       }
 
@@ -894,10 +1064,23 @@
 
       const darkColors = ['black', 'navy', 'dark', 'charcoal', 'brown', 'maroon', 'forest', 'purple', 'royal', 'pepper'];
 
+      // Case-insensitive variation value getter
+      const getVar = (key) => {
+        if (variations[key] !== undefined) return variations[key];
+        const lower = key.toLowerCase();
+        for (const [k, v] of Object.entries(variations)) {
+          if (k.toLowerCase() === lower) return v;
+        }
+        return '';
+      };
+
       // Use dynamic mappings loaded from API (with hardcoded fallback)
       const typeMap = this._typeMap || {
-        'T-Shirt': 'T-Shirt', 'TShirt': 'T-Shirt', 'Hoodie': 'Hoodie', 'Sweatshirt': 'Sweatshirt',
+        'T-Shirt': 'T-shirt', 'TShirt': 'T-shirt', 'Hoodie': 'Hoodie', 'Sweatshirt': 'Sweatshirt',
         'Comfort TShirt': 'Comfort colors t-shirt',
+        'Comfort T-shirt': 'Comfort colors t-shirt',
+        'Comfort Colors': 'Comfort colors t-shirt',
+        'Comfort': 'Comfort colors t-shirt',
         'Wash T-shirt': 'Mineral Wash Colortone 1300',
         'Tough Cases (iPhone)': 'Tough Cases (iPhone)',
         'Football Jersey': '3D-VN  Mesh football jersey',
@@ -919,7 +1102,24 @@
         'Ceramic Mug': 'Ceramic Mug US 2',
         'Accent Mug': 'Accent Mug US 2',
         'Acrylic Keychain': 'Acrylic Keychain US',
+        'Keychain 2 Side': 'Acrylic Keychain 2 side US',
+        'Keychain 2side': 'Acrylic Keychain 2 side US',
+        '2 Side Keychain': 'Acrylic Keychain 2 side US',
+        '2Side Keychain': 'Acrylic Keychain 2 side US',
         'Suncatcher': 'Window Hanging Suncatcher Ornaments 1 layer US',
+        'Normal Shirt': '3D-VN US HAWAIIAN SHIRT',
+        'Hawaiian Shirt': '3D-VN US HAWAIIAN SHIRT',
+        'Classic Dad Hat': 'Classic Dad Hat',
+        'Premium Embroidery': 'Classic Dad Hat',
+        'Classic Printed': 'Classic Dad Hat',
+        'Baseball Hat': 'Baseball Hat',
+        'Embroidery Baseball Hat': 'Baseball Hat',
+        'Trucker Hat': 'Trucker Hat',
+        'Double Printed Flag': '3D-VN USA Polyester and Double Printed Flag',
+        '3D Printed Flag': '3D-VN USA Polyester and Double Printed Flag',
+        'Flag': '3D-VN USA Polyester and Double Printed Flag',
+        'Greeting Card': 'Greetingcard',
+        'Card': 'Greetingcard',
       };
       const colorStyleMap = this._colorStyleMap || {};
       // Mug product definitions (color + size constraints)
@@ -940,6 +1140,13 @@
         color: ['Default'],
         size: ["2''", "3''", "4''"],
       };
+      const keychain2SideProduct = {
+        name: 'Acrylic Keychain 2 side US',
+        color: ['Default'],
+        size: ["2''", "3''", "4''"],
+      };
+      const oneSizeProductTypes = new Set(['Classic Dad Hat', 'Baseball Hat', 'Trucker Hat']);
+
       const toughCasesIphone = {
         name: 'Tough Cases (iPhone)',
         size: [
@@ -1033,6 +1240,8 @@
       // Case-insensitive typeMap lookup: exact first, then case-insensitive, then partial
       const lookupType = (rawType) => {
         if (!rawType) return '';
+        // Normalize "Tshirt"/"TShirt"/"tshirt" → "T-Shirt" so hyphen-less variants always match
+        if (/^t-?shirt$/i.test(rawType)) rawType = 'T-Shirt';
         if (typeMap[rawType]) return typeMap[rawType];
         const lower = rawType.toLowerCase();
         for (const [key, val] of Object.entries(typeMap)) {
@@ -1044,12 +1253,18 @@
         for (const [key, val] of Object.entries(typeMap)) {
           if (lower.length >= key.length && lower.includes(key.toLowerCase())) return val;
         }
+        // Strip size suffix from API keys and compare
+        // e.g. rawType="AOP Mesh FB CTJ" matches key="AOP Mesh FB CTJ - M" after stripping " - M"
+        for (const [key, val] of Object.entries(typeMap)) {
+          const keyBase = key.replace(/\s+-\s*(5XL|4XL|3XL|XXXL|2XL|XXL|XL|L|M|S|XS)\s*$/i, '').trim();
+          if (keyBase.toLowerCase() === lower) return val;
+        }
         return rawType;
       };
 
       // === Handle "Style and Size" format ===
       // Example: "Unisex T-shirt XL" -> size="XL", product_type="T-shirt"
-      const styleAndSize = variations['Style and Size'] || '';
+      const styleAndSize = getVar('Style and Size');
       if (styleAndSize) {
         const sizeMatch = styleAndSize.match(/\b(5XL|4XL|3XL|XXXL|2XL|XXL|XL|L|M|S|XS)\s*$/i);
         if (sizeMatch) {
@@ -1063,7 +1278,7 @@
 
       // === Handle "Style" format ===
       // Example: "T-Shirt - M" -> size="M", product_type="T-shirt"
-      const styleVariation = variations['Style'] || '';
+      const styleVariation = getVar('Style');
       if (!size && styleVariation && styleVariation.includes(' - ')) {
         const parts = styleVariation.split(' - ');
         if (parts.length >= 2) {
@@ -1078,16 +1293,40 @@
         }
       }
 
+      // === Pre-resolve "Product Type" variation ===
+      // Must run before shirtSize/typeVariation blocks so product_type is locked before their guards run.
+      if (!product_type) {
+        const productTypeVar = getVar('Product Type');
+        if (productTypeVar) {
+          const mapped = lookupType(productTypeVar);
+          const lower = productTypeVar.toLowerCase();
+          const isKnown = Object.keys(typeMap).some(k => k.toLowerCase() === lower);
+          if (isKnown || mapped.toLowerCase() !== lower) {
+            product_type = mapped;
+          }
+        }
+      }
+
       // === Handle "Shirt size" / "Unisex shirt size" format ===
       // Example: "Hoodie - 2XL" -> size="2XL", product_type="Hoodie"
-      const shirtSize = variations['Shirt size'] || variations['Unisex shirt size'] || variations['Sizes'] || variations['Size'] || '';
+      const shirtSize = getVar('Shirt size') || getVar('Unisex shirt size') || getVar('Sizes') || getVar('Size');
       if (!size && shirtSize && shirtSize.includes(' - ')) {
         const parts = shirtSize.split(' - ');
         if (parts.length >= 2) {
           const rawType = parts[0].trim();
-          size = parts[1].trim();
-          if (!product_type) {
-            product_type = lookupType(rawType);
+          const rawSizeVal = parts[1].trim();
+          // Handle "2Side - Ninch" → Acrylic Keychain 2 side US
+          if (/^2\s*side$/i.test(rawType) && /^(\d+)\s*inch?s?$/i.test(rawSizeVal)) {
+            const inchNum = rawSizeVal.match(/^(\d+)/)[1];
+            size = `${inchNum}''`;
+            product_type = keychain2SideProduct.name;
+          } else {
+            // Normalize bare inch-mark: "3"" → "3''"
+            const bareInchMatch = rawSizeVal.match(/^(\d+)\s*"$/);
+            size = bareInchMatch ? `${bareInchMatch[1]}''` : rawSizeVal;
+            if (!product_type) {
+              product_type = lookupType(rawType);
+            }
           }
         }
       }
@@ -1106,9 +1345,14 @@
         }
       }
 
+      // Plain size value with no type prefix: "XL", "2XL", "S", etc.
+      if (!size && shirtSize && /^(5XL|4XL|3XL|XXXL|2XL|XXL|XL|L|M|S|XS)$/i.test(shirtSize)) {
+        size = normalizeSize(shirtSize);
+      }
+
       // === Handle "Type-Size" format ===
       // Example: "Hoodie-2XL" -> size="2XL", product_type="Hoodie"
-      const typeSize = variations['Type-Size'] || variations['Type - Size'] || '';
+      const typeSize = getVar('Type-Size') || getVar('Type - Size');
       if (!size && typeSize) {
         const lastHyphen = typeSize.lastIndexOf('-');
         if (lastHyphen > 0) {
@@ -1123,12 +1367,13 @@
         }
       }
 
-      // === Handle "Type" format ===
+      // === Handle "Type" / "Hat Type" format ===
       // Example: "Wash T-shirt - 2XL" -> size="2XL", product_type="Mineral Wash Colortone 1300"
       // Example: "Die Sticker - 2"x2"" -> size="2''x2''", product_type="Die-cut Stickers US 2"
       // Example: "Die Sticker -2"x2"" -> size="2''x2''", product_type="Die-cut Stickers US 2"
       // Example: "Poster - 8x12" -> size="8''x12''", product_type="Premium Luster Photo Paper Poster US 2"
-      const typeVariation = variations['Type'] || '';
+      // Example: Hat Type="Trucker Hat" or "Classic Dad Hat"
+      const typeVariation = getVar('Type') || getVar('Hat Type') || getVar('Product Type');
       if (!size && typeVariation) {
         // Flexible separator: " - " or " -" (with or without trailing space)
         const typeMatch = typeVariation.match(/^(.+?)\s+-\s*(.+)$/);
@@ -1198,6 +1443,27 @@
         }
       }
 
+      // === Fallback: variation KEY is the product type name, VALUE is the garment size ===
+      // Example: { "Unisex Ringer T-Shirt": "XL" } — Etsy uses the variation group name as the label
+      if (!size) {
+        const knownSizeKeys = new Set([
+          'Style and Size', 'Type-Size', 'Type - Size', 'Type', 'TYPE', 'Hat Type', 'Sizes', 'Size', 'SIZE',
+          'Shirt size', 'Unisex shirt size', 'Style', 'Color', 'Colors', 'Shirt Colors',
+          'Design', 'DESIGN', 'Option', 'Option 1', 'Option 2', 'SKU', 'Personalization',
+          'Product Type'
+        ]);
+        for (const [key, val] of Object.entries(variations)) {
+          if (knownSizeKeys.has(key)) continue;
+          if (/^(5XL|4XL|3XL|XXXL|2XL|XXL|XL|L|M|S|XS)$/i.test(val)) {
+            size = normalizeSize(val);
+            if (!product_type) {
+              product_type = lookupType(key.replace(/^Unisex\s+/i, '').trim());
+            }
+            break;
+          }
+        }
+      }
+
       // === Handle Mug format ===
       // Example: Type="Ceramic Mug - 11oz", Color="Black" -> product_type="Ceramic Mug US 2"
       if (!product_type && typeVariation) {
@@ -1236,7 +1502,12 @@
       // Example: Type="iPhone 15 Pro Max" -> product_type="Tough Cases (iPhone)"
       if (!product_type && typeVariation) {
         const normalizedType = Utils.normalizeVariationValue(typeVariation);
-        const matchedIphoneSize = toughCasesIphone.size.find((sz) => sz.toLowerCase() === normalizedType.toLowerCase());
+        // Also handle hyphen-before-digit variants: "iPhone-13 / 14" → "iPhone 13 / 14"
+        const normalizedTypeNoHyphen = normalizedType.replace(/-(\d)/g, ' $1');
+        const matchedIphoneSize = toughCasesIphone.size.find((sz) => {
+          const szL = sz.toLowerCase();
+          return szL === normalizedType.toLowerCase() || szL === normalizedTypeNoHyphen.toLowerCase();
+        });
         if (matchedIphoneSize) {
           size = normalizeToughCasesIphoneSize(matchedIphoneSize);
           product_type = toughCasesIphone.name;
@@ -1245,12 +1516,42 @@
         }
       }
 
+      // === Handle pure product type name (no size suffix) ===
+      // Example: Type="Premium Embroidery" → product_type="Classic Dad Hat"
+      // Example: Type="Classic Dad Hat"    → product_type="Classic Dad Hat" (self-reference)
+      if (!product_type && typeVariation) {
+        const directLookup = lookupType(typeVariation);
+        const lower = typeVariation.toLowerCase();
+        const isInTypeMap = Object.keys(typeMap).some(k => k.toLowerCase() === lower);
+        if (directLookup && (isInTypeMap || directLookup.toLowerCase() !== lower)) {
+          product_type = directLookup;
+        }
+      }
+
+      // Default size to "One Size" for applicable product types (e.g., hats)
+      if (!size && product_type && oneSizeProductTypes.has(product_type)) {
+        size = 'One Size';
+      }
+
+      // === Handle Flag size format ===
+      // Example: Type="Double Printed Flag", Size="36x60 In" → size="Horizontal/36*60"
+      // Defaults to Horizontal orientation (most common for outdoor flags).
+      if (!size && product_type && /flag/i.test(product_type)) {
+        const flagSizeRaw = getVar('Size') || getVar('Sizes');
+        if (flagSizeRaw) {
+          const flagDimMatch = flagSizeRaw.match(/(\d+)\s*[xX×]\s*(\d+)/);
+          if (flagDimMatch) {
+            size = `Horizontal/${flagDimMatch[1]}*${flagDimMatch[2]}`;
+          }
+        }
+      }
+
       // === Handle Window Hanging Suncatcher and similar inch-only ornament products ===
       // OPTION: "Design 1" (ignored for color), SIZE: "6 INCHES" → "6''"
       if (!product_type && /suncatcher/i.test(itemName)) {
         product_type = 'Window Hanging Suncatcher Ornaments 1 layer US';
         if (!size) {
-          const suncatcherSizeRaw = variations['Size'] || variations['SIZE'] || '';
+          const suncatcherSizeRaw = getVar('Size');
           const inchOnlyMatch = suncatcherSizeRaw.match(/^(\d+)\s*(?:inches?|in\b|["“”″]|'{1,2})?$/i);
           if (inchOnlyMatch) {
             size = `${inchOnlyMatch[1]}''`;
@@ -1264,7 +1565,7 @@
       if (!product_type && /acrylic keychain/i.test(itemName)) {
         product_type = keychainProduct.name;
         if (!size) {
-          const keychainSizeRaw = variations['Size'] || '';
+          const keychainSizeRaw = getVar('Size');
           const keychainSizeMatch = keychainSizeRaw.match(/^(\d+)\s*(?:in)?/i);
           if (keychainSizeMatch) {
             size = `${keychainSizeMatch[1]}''`;
@@ -1272,10 +1573,57 @@
         }
       }
 
+      // === Handle Comfort Colors from item title ===
+      // Example: title starts with "Comfort Colors..." → product_type="Comfort colors t-shirt"
+      if (!product_type && /^comfort\s+colors?\b/i.test(itemName)) {
+        product_type = 'Comfort colors t-shirt';
+      }
+
+      // === Handle Baseball Hat from item title ===
+      if (!product_type && /\b(?:embroid\w*\s+baseball\s+hat|baseball\s+hat)\b/i.test(itemName)) {
+        product_type = 'Baseball Hat';
+      }
+
+      // === Handle Classic Dad Hat from item title ===
+      if (!product_type && /\b(?:dad\s+hat|racing\s+cap|trucker\s+hat|snapback|fitted\s+cap)\b/i.test(itemName)) {
+        product_type = 'Classic Dad Hat';
+      }
+      if (!product_type && typeVariation && /\bembroid/i.test(typeVariation) && /\b(?:hat|cap)\b/i.test(itemName)) {
+        product_type = 'Classic Dad Hat';
+      }
+
+      // After title-based detection: apply One Size + color defaults for hat types
+      if (product_type === 'Classic Dad Hat' || product_type === 'Baseball Hat' || product_type === 'Trucker Hat') {
+        if (!size) size = 'One Size';
+        if (!color) {
+          const HAT_COLORS = ['Black','White','Navy','Khaki','Beige','Grey','Gray','Red','Blue','Green','Pink','Brown','Tan','Olive','Stone'];
+          const titleColorMatch = HAT_COLORS.find(c => new RegExp('\\b' + c + '\\b', 'i').test(itemName));
+          color = titleColorMatch || 'Black';
+        }
+      }
+
+      // === Handle Greeting Card format ===
+      // SIZE: "Size 4x6" → size="4x6", product_type="Greetingcard", color="White"
+      if (!size) {
+        const cardSizeRaw = getVar('Size');
+        const cardSizeMatch = cardSizeRaw && cardSizeRaw.match(/^size\s+(\d+)\s*[x×]\s*(\d+)$/i);
+        if (cardSizeMatch) {
+          size = `${cardSizeMatch[1]}x${cardSizeMatch[2]}`;
+          if (!product_type) product_type = 'Greetingcard';
+          if (!color) color = 'White';
+        }
+      }
+
+      // === Handle Greeting Card from item title ===
+      if (!product_type && /\b(?:greeting\s*card|birthday\s*card|anniversary\s*card|romance\s*card|holiday\s*card|book\s*lover\s*card)\b/i.test(itemName)) {
+        product_type = 'Greetingcard';
+        if (!color) color = 'White';
+      }
+
       // === Handle Sticker/Poster format ===
       // Example: Size="3in x 3in" -> size="3''x3''", product_type="Die-cut Stickers US 2"
       // Example: Size="3 x 3" or Size="2x2" -> size="3''x3''"
-      const sizeRaw = variations['Size'] || '';
+      const sizeRaw = getVar('Size');
       if (sizeRaw && !size) {
         // Try "Nin x Nin" format (also handles × Unicode multiply sign)
         const inchMatch = sizeRaw.match(/(\d+)\s*(?:in|["\u201C\u201D\u2033]|'{1,2})?\s*[x\u00D7]\s*(\d+)\s*(?:in|["\u201C\u201D\u2033]|'{1,2})?/i);
@@ -1295,23 +1643,57 @@
       }
 
       // === Handle Color ===
-      const colorRaw = variations['Shirt Colors'] || variations['Colors'] || variations['Color'] || '';
+      // DESIGN key (e.g. "Black-Mucho Picante") is treated as color when value is not a numeric code.
+      // Only take the part before the first hyphen: "Black-Mucho Picante" → "Black"
+      const designValForColor = getVar('Design');
+      let designColorPart = '';
+      if (designValForColor && !/^\d+$/.test(designValForColor)) {
+        const hyphenIdx = designValForColor.indexOf('-');
+        designColorPart = hyphenIdx > 0 ? designValForColor.substring(0, hyphenIdx).trim() : designValForColor;
+      }
+      const colorRaw = getVar('Shirt Colors') || getVar('Colors') || getVar('Color') || designColorPart;
       let design = '';
       if (colorRaw && color !== 'Default') {
-        // Check for parentheses format: "Pepper(ComfortShirt)"
-        const parenMatch = colorRaw.match(/^(.+?)\((.+?)\)$/);
+        const styleMap = {
+          'ComfortShirt': 'Comfort colors t-shirt',
+          'Comfort Shirt': 'Comfort colors t-shirt',
+          'ComfortColors': 'Comfort colors t-shirt',
+          'Comfort': 'Comfort colors t-shirt',
+          'Gildan': 'Gildan T-shirt',
+          'Hoodie': 'Hoodie', 'Sweatshirt': 'Sweatshirt', 'Sweashirt': 'Sweatshirt'
+        };
+        // Case-insensitive lookup: colorStyleMap (API) first, then hardcoded styleMap
+        const lookupStyle = (code) => {
+          if (!code) return '';
+          const lower = code.toLowerCase();
+          for (const [k, v] of Object.entries(colorStyleMap)) {
+            if (k.toLowerCase() === lower) return v;
+          }
+          for (const [k, v] of Object.entries(styleMap)) {
+            if (k.toLowerCase() === lower) return v;
+          }
+          return '';
+        };
+
+        // Parentheses format: "Berry (Comfortshirt)" or "Pepper(ComfortShirt)"
+        const parenMatch = colorRaw.match(/^(.+?)\s*\((.+?)\)$/);
+        // Hyphen format: "Black - Comfort" or "Black - Gildan"
+        const hyphenStyleMatch = !parenMatch && colorRaw.match(/^(.+?)\s+-\s+(Comfort(?:shirt|\s*colors?)?|Gildan|Hoodie|Sweatshirt|Sweashirt)\s*$/i);
+
         if (parenMatch) {
           color = parenMatch[1].trim();
           const styleCode = parenMatch[2].trim();
-          const styleMap = {
-            'ComfortShirt': 'Comfort colors t-shirt',
-            'Comfort Shirt': 'Comfort colors t-shirt',
-            'ComfortColors': 'Comfort colors t-shirt',
-            'Gildan': 'Gildan T-shirt',
-            'Hoodie': 'Hoodie', 'Sweatshirt': 'Sweatshirt', 'Sweashirt': 'Sweatshirt'
-          };
+          const mappedType = lookupStyle(styleCode);
           // styleCode in parentheses is more specific — always override product_type if mapped
-          const mappedType = colorStyleMap[styleCode] || styleMap[styleCode];
+          if (mappedType) {
+            product_type = mappedType;
+          } else if (!product_type) {
+            product_type = styleCode;
+          }
+        } else if (hyphenStyleMatch) {
+          color = hyphenStyleMatch[1].trim();
+          const styleCode = hyphenStyleMatch[2].trim();
+          const mappedType = lookupStyle(styleCode);
           if (mappedType) {
             product_type = mappedType;
           } else if (!product_type) {
@@ -1325,6 +1707,14 @@
       // Acrylic Keychain US always uses Default color.
       if (product_type === keychainProduct.name) {
         color = keychainProduct.color[0];
+      }
+      // Acrylic Keychain 2 side US always uses Default color.
+      if (product_type === keychain2SideProduct.name) {
+        color = keychain2SideProduct.color[0];
+      }
+      // Greetingcard always uses White color.
+      if (product_type === 'Greetingcard') {
+        color = 'White';
       }
 
       // === 3D-VN product types: override color based on product_type ===
@@ -1341,6 +1731,8 @@
         '3D-VN AOP V-Neck Hockey Jersey': '3D Print Cothing',
         '3D-VN All Over Print Men Polo Premium Shirt': '3D Printed',
         '3D-VN All Over Print Women Polo Premium Shirt': '3D Printed',
+        '3D-VN US HAWAIIAN SHIRT': '3D Printed',
+        '3D-VN USA Polyester and Double Printed Flag': '3D Printed',
       };
       if (product_type && productTypeColorMap[product_type]) {
         // Extract style number from color (e.g. "Red - Style 2" → design "2")
@@ -1354,11 +1746,31 @@
       }
 
       // === Handle Design variation ===
-      const designRaw = variations['Design'] || variations['design'] || '';
+      const designRaw = getVar('Design');
       if (designRaw) {
         const designNum = designRaw.match(/(\d+)/);
         if (designNum) {
           design = designNum[1];
+        }
+      }
+
+      // Also check OPTION key for "Design N" pattern (e.g. OPTION: "Design 1")
+      if (!design) {
+        const optionVal = getVar('Option');
+        if (optionVal) {
+          const optionDesignNum = optionVal.match(/Design\s*(\d+)/i);
+          if (optionDesignNum) {
+            design = optionDesignNum[1];
+          }
+        }
+      }
+
+      // Also check TYPE key for "DESIGN N" pattern (e.g. TYPE: "DESIGN 2" for Acrylic Keychain 2 side)
+      if (!design) {
+        const typeValForDesign = getVar('Type');
+        if (typeValForDesign) {
+          const typeDesignMatch = typeValForDesign.match(/^design\s*(\d+)$/i);
+          if (typeDesignMatch) design = typeDesignMatch[1];
         }
       }
 
@@ -1370,7 +1782,7 @@
       // === Handle SKU field as product_type fallback ===
       // e.g. "P.T-Shirt" → strip prefix like "P." → "T-Shirt" → lookupType
       if (!product_type) {
-        const skuField = variations['SKU'] || '';
+        const skuField = getVar('SKU');
         if (skuField) {
           const skuTypePart = skuField.replace(/^[A-Za-z]+\.\s*/i, '').trim();
           if (skuTypePart) {
@@ -1590,12 +2002,36 @@
               item.price = parseFloat(priceMatch[1].replace(',', ''));
             }
 
-            // Get variations from item cell - handle all variation types
+            // Get variations from item cell — try DOM parsing first (handles "Type  Value" without colon)
+            const variationLis = itemCell.querySelectorAll('li.clearfix, ul.list-unstyled > li');
+            variationLis.forEach(li => {
+              const labelEl = li.querySelector('.text-gray-lighter');
+              const valueEl = li.querySelector('.strong');
+              if (labelEl && valueEl) {
+                const label = Utils.safeText(labelEl);
+                const value = Utils.normalizeVariationValue(Utils.safeText(valueEl));
+                if (label && value && label !== 'Quantity') {
+                  item.variations[label] = value;
+                }
+              } else {
+                const liText = Utils.safeText(li);
+                if (liText && liText.includes(':')) {
+                  const [label, ...valueParts] = liText.split(':');
+                  const labelClean = label.trim();
+                  const valueClean = valueParts.join(':').trim();
+                  if (labelClean && valueClean && labelClean !== 'Quantity') {
+                    item.variations[labelClean] = Utils.normalizeVariationValue(valueClean);
+                  }
+                }
+              }
+            });
+
+            // Regex fallback for any variation not yet captured via DOM
             const itemText = itemCell.textContent;
             const variationPatterns = [
               { key: 'Shirt size', pattern: /Shirt size[:\s]*([^\n]+)/i },
               { key: 'Shirt Colors', pattern: /Shirt Colors?[:\s]*([^\n]+)/i },
-              { key: 'Type', pattern: /(?:^|\n)\s*Type[:\s]+([^\n]+)/i },
+              { key: 'Type', pattern: /\bType\s*[:\s]\s*([^\n]+)/i },
               { key: 'Style', pattern: /(?:^|\n)\s*Style[:\s]+([^\n]+)/i },
               { key: 'Style and Size', pattern: /Style and Size[:\s]*([^\n]+)/i },
               { key: 'Sizes', pattern: /(?:^|\n)\s*Sizes[:\s]+([^\n]+)/i },
@@ -1608,9 +2044,23 @@
             ];
 
             for (const { key, pattern } of variationPatterns) {
+              if (item.variations[key]) continue; // already captured via DOM
               const match = itemText.match(pattern);
               if (match) {
                 item.variations[key] = Utils.normalizeText(match[1].trim());
+              }
+            }
+
+            // Fallback: catch "Label Size" lines like "Unisex Ringer T-Shirt XL"
+            // where the variation group name is the label and the size is the value
+            if (!item.variations['Size'] && !item.variations['Shirt size'] && !item.variations['Style and Size'] && !item.variations['Type']) {
+              const sizeSuffixMatch = itemText.match(/^([\w][\w\s\-\/]+?)\s+(5XL|4XL|3XL|XXXL|2XL|XXL|XL|L|M|S|XS)\s*$/im);
+              if (sizeSuffixMatch) {
+                const rawLabel = sizeSuffixMatch[1].trim();
+                const skipLabels = /^(Shirt size|Unisex shirt size|Sizes?|Style|Type|Color|Colors|Design|Option|SKU|Personalization)/i;
+                if (!skipLabels.test(rawLabel) && !item.variations[rawLabel]) {
+                  item.variations[rawLabel] = sizeSuffixMatch[2].toUpperCase();
+                }
               }
             }
 
@@ -1652,6 +2102,13 @@
             if (skuParts.length === 0) {
               for (const [, value] of Object.entries(item.variations)) {
                 skuParts.push(value);
+              }
+            }
+            // Also include values from unknown variation keys not already in skuParts
+            const detailPriorityKeySet = new Set(priorityKeys);
+            for (const [key, value] of Object.entries(item.variations)) {
+              if (!detailPriorityKeySet.has(key) && !skuParts.includes(value)) {
+                skuParts.unshift(value);
               }
             }
             item.sku_name = skuParts.join(', ');

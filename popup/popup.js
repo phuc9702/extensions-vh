@@ -28,10 +28,15 @@
     syncedCount: document.getElementById('syncedCount'),
     pendingCount: document.getElementById('pendingCount'),
     
-    // Shop Name
+    // Shop Name (Etsy)
     shopNameInput: document.getElementById('shopNameInput'),
     saveShopNameBtn: document.getElementById('saveShopNameBtn'),
     shopNameHint: document.getElementById('shopNameHint'),
+
+    // Whatnot Username
+    whatnotUsernameInput: document.getElementById('whatnotUsernameInput'),
+    saveWhatnotUsernameBtn: document.getElementById('saveWhatnotUsernameBtn'),
+    whatnotUsernameHint: document.getElementById('whatnotUsernameHint'),
     
     // Google Drive
     gdriveConnectBtn: document.getElementById('gdriveConnectBtn'),
@@ -85,14 +90,16 @@
     elements.notificationsToggle?.addEventListener('change', saveSettings);
     elements.autoSyncInterval?.addEventListener('change', saveSettings);
     
-    // Shop name save button
+    // Shop name save button (Etsy)
     elements.saveShopNameBtn?.addEventListener('click', handleSaveShopName);
-    
-    // Shop name input - save on Enter key
     elements.shopNameInput?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        handleSaveShopName();
-      }
+      if (e.key === 'Enter') handleSaveShopName();
+    });
+
+    // Whatnot username save button
+    elements.saveWhatnotUsernameBtn?.addEventListener('click', handleSaveWhatnotUsername);
+    elements.whatnotUsernameInput?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') handleSaveWhatnotUsername();
     });
     
     // Google Drive connect/disconnect
@@ -151,8 +158,9 @@
     elements.usernameDisplay.textContent = username || 'User';
     elements.settingsUsername.textContent = username || '-';
     
-    // Load and display shop name
+    // Load and display shop names
     await loadShopName();
+    await loadWhatnotUsername();
     
     // Show home tab
     switchTab('home');
@@ -228,6 +236,56 @@
     // Auto-hide success after 3 seconds
     if (type === 'success') {
       setTimeout(() => statusEl.remove(), 3000);
+    }
+  }
+
+  /**
+   * Load Whatnot username from storage
+   */
+  async function loadWhatnotUsername() {
+    try {
+      const { whatnotUsername } = await chrome.storage.local.get('whatnotUsername');
+      if (elements.whatnotUsernameInput) {
+        elements.whatnotUsernameInput.value = whatnotUsername || '';
+      }
+      if (whatnotUsername && elements.whatnotUsernameHint) {
+        elements.whatnotUsernameHint.textContent = `✓ Whatnot: @${whatnotUsername}`;
+        elements.whatnotUsernameHint.style.color = '#69f0ae';
+      }
+    } catch (e) {
+      console.error('Failed to load Whatnot username:', e);
+    }
+  }
+
+  /**
+   * Handle save Whatnot username
+   */
+  async function handleSaveWhatnotUsername() {
+    const username = elements.whatnotUsernameInput?.value.trim();
+    if (!username) {
+      if (elements.whatnotUsernameHint) {
+        elements.whatnotUsernameHint.textContent = '⚠️ Username cannot be empty';
+        elements.whatnotUsernameHint.style.color = '#ff8a80';
+      }
+      return;
+    }
+    try {
+      await chrome.storage.local.set({ whatnotUsername: username });
+      if (elements.saveWhatnotUsernameBtn) {
+        elements.saveWhatnotUsernameBtn.classList.add('saved');
+        setTimeout(() => elements.saveWhatnotUsernameBtn.classList.remove('saved'), 2000);
+      }
+      if (elements.whatnotUsernameHint) {
+        elements.whatnotUsernameHint.textContent = `✓ Whatnot "@${username}" saved!`;
+        elements.whatnotUsernameHint.style.color = '#69f0ae';
+        setTimeout(() => {
+          elements.whatnotUsernameHint.textContent = 'Your Whatnot seller username (visible in whatnot.com/dashboard)';
+          elements.whatnotUsernameHint.style.color = '';
+        }, 3000);
+      }
+      console.log('Whatnot username saved:', username);
+    } catch (e) {
+      console.error('Failed to save Whatnot username:', e);
     }
   }
 

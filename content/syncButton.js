@@ -466,6 +466,36 @@
     // Don't auto-close - user needs to take action
   }
 
+  async function checkExistingEtsyOrders(orderIds) {
+    try {
+      let token;
+      try { token = await getValidAccessToken(); } catch { token = null; }
+      const checkUrl = `${API_URL}/api/ecommerce/etsy/check-orders/`;
+      const isLocalhost = API_URL.includes('localhost') || API_URL.includes('127.0.0.1');
+      let data;
+      if (isLocalhost) {
+        const res = await fetch(checkUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ order_ids: orderIds })
+        });
+        if (!res.ok) return new Set();
+        data = await res.json();
+      } else {
+        const resp = await chrome.runtime.sendMessage({
+          type: 'ETSY_API_POST',
+          payload: { url: checkUrl, data: { order_ids: orderIds }, token }
+        });
+        if (!resp?.ok) return new Set();
+        try { data = JSON.parse(resp.body || '{}'); } catch { data = {}; }
+      }
+      return new Set((data.existing || []).map(String));
+    } catch (e) {
+      console.warn('[VH Etsy] checkExistingOrders failed:', e.message);
+      return new Set();
+    }
+  }
+
   /**
    * Send orders to API via service worker ONLY (localhost không fetch được từ content script)
    * @param {boolean} isRetryAfterRefresh - internal flag to prevent infinite retry
@@ -671,9 +701,81 @@
   }
 
   /**
+   * Make container draggable by its header
+   */
+  function makeDraggable(container) {
+    const header = container.querySelector('.vh-sync-header');
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+    let hasMoved = false;
+
+    const convertToTopLeft = () => {
+      const rect = container.getBoundingClientRect();
+      container.style.bottom = 'auto';
+      container.style.right = 'auto';
+      container.style.top = rect.top + 'px';
+      container.style.left = rect.left + 'px';
+    };
+
+    header.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.vh-sync-minimize')) return;
+      e.preventDefault();
+      isDragging = true;
+      hasMoved = false;
+
+      if (!container.style.top || container.style.top === 'auto') {
+        convertToTopLeft();
+      }
+
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = parseFloat(container.style.left) || 0;
+      startTop = parseFloat(container.style.top) || 0;
+      header.style.cursor = 'grabbing';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+
+      const rect = container.getBoundingClientRect();
+      const newLeft = Math.max(0, Math.min(startLeft + dx, window.innerWidth - rect.width));
+      const newTop = Math.max(0, Math.min(startTop + dy, window.innerHeight - rect.height));
+      container.style.left = newLeft + 'px';
+      container.style.top = newTop + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      header.style.cursor = '';
+      if (hasMoved) {
+        chrome.storage.local.set({
+          vhPanelPosition: { top: container.style.top, left: container.style.left }
+        });
+      }
+    });
+
+    // Restore saved position
+    chrome.storage.local.get('vhPanelPosition').then(({ vhPanelPosition }) => {
+      if (vhPanelPosition?.top && vhPanelPosition?.left) {
+        container.style.bottom = 'auto';
+        container.style.right = 'auto';
+        container.style.top = vhPanelPosition.top;
+        container.style.left = vhPanelPosition.left;
+      }
+    }).catch(() => {});
+  }
+
+  /**
    * Initialize event handlers
    */
   function initializeEventHandlers(container) {
+    // Draggable
+    makeDraggable(container);
+
     // Minimize button
     const minimizeBtn = container.querySelector('.vh-sync-minimize');
     const panel = container.querySelector('.vh-sync-panel');
@@ -847,6 +949,31 @@
 
       if (!orders.length) {
         throw new Error('No orders found to sync.');
+      }
+
+      // ── Pre-check: skip already-synced orders ──
+      {
+        const bareIds = orders.map(o => (o.order_id || '').replace('ETSY-', ''));
+        statusText.textContent = `Checking ${bareIds.length} orders…`;
+        progressEl.style.display = 'flex';
+        progressFill.style.width = '0%';
+        progressText.textContent = '…';
+        const existingIds = await checkExistingEtsyOrders(bareIds);
+        if (existingIds.size > 0) {
+          orders = orders.filter(o => !existingIds.has((o.order_id || '').replace('ETSY-', '')));
+          statusText.textContent = `${existingIds.size} đã sync, cần sync ${orders.length} đơn mới…`;
+        }
+        if (orders.length === 0) {
+          progressEl.style.display = 'none';
+          resultsEl.style.display = 'flex';
+          document.querySelector('.vh-success-count').textContent = 0;
+          document.querySelector('.vh-skipped-count').textContent = existingIds.size;
+          document.querySelector('.vh-failed-count').textContent = 0;
+          showToast(0, existingIds.size, 0, [], [], [...existingIds]);
+          statusText.textContent = 'Tất cả đơn đã được sync!';
+          statusDot.className = 'vh-status-dot vh-status-success';
+          return;
+        }
       }
 
       // Show progress

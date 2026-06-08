@@ -59,6 +59,36 @@
     },
     {
       "matches": [
+        "*://whatnot.com/dashboard/orders*",
+        "*://www.whatnot.com/dashboard/orders*",
+        "*://whatnot.com/dashboard/shipments*",
+        "*://www.whatnot.com/dashboard/shipments*"
+      ],
+      "js": [
+        "content/whatnotFetchInterceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://whatnot.com/dashboard/orders*",
+        "*://www.whatnot.com/dashboard/orders*",
+        "*://whatnot.com/dashboard/shipments*",
+        "*://www.whatnot.com/dashboard/shipments*"
+      ],
+      "js": [
+        "lib/jwt-decode.min.js",
+        "content/whatnotOrderScraper.js",
+        "content/whatnotSyncButton.js"
+      ],
+      "css": [
+        "css/syncButton.css"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
         "*://*.etsy.com/listing/*",
         "*://*.etsy.com/search*",
         "*://*.etsy.com/c/*",
@@ -93,14 +123,21 @@
   "host_permissions": [
     "https://vhmediaco.app/*",
     "https://*.vhmediaco.app/*",
-    "https://vhmediaco.app/*",
+    "*://*.whatnot.com/*",
+    "*://whatnot.com/*",
     "*://*.etsy.com/*",
     "*://*.etsystatic.com/*",
     "*://*.amazon.com/*",
     "*://m.media-amazon.com/*",
     "*://images-na.ssl-images-amazon.com/*",
     "https://www.googleapis.com/*",
-    "https://accounts.google.com/*"
+    "https://accounts.google.com/*",
+    "https://*.goshippo.com/*",
+    "https://deliver.goshippo.com/*",
+    "https://*.shippo.com/*",
+    "https://*.goshipo.com/*",
+    "https://*.easypost.com/*",
+    "https://*.shipstation.com/*"
   ],
   "web_accessible_resources": [
     {
@@ -113,7 +150,9 @@
         "*://*.aliexpress.us/*",
         "*://*.temu.com/*",
         "*://*.etsy.com/*",
-        "*://*.amazon.com/*"
+        "*://*.amazon.com/*",
+        "*://*.whatnot.com/*",
+        "*://whatnot.com/*"
       ]
     }
   ]
